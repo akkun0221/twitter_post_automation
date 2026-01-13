@@ -60,7 +60,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     );
 
     const tweet = await client.v2.tweet(text, {
-      media: { media_ids: mediaIds },
+      media: {
+        media_ids: mediaIds as
+          | [string]
+          | [string, string]
+          | [string, string, string]
+          | [string, string, string, string],
+      },
     });
 
     return res.status(200).json({
