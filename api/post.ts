@@ -36,12 +36,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // The library wrapper helps us.
     const mediaIds = await Promise.all(
       images.map(async (base64Image: string) => {
+        // Detect mime type
+        const match = base64Image.match(/^data:(image\/\w+);base64,/);
+        const mimeType = match ? match[1] : "image/jpeg"; // Default to jpeg if not found
+
         // Remove data header if present
         const cleanBase64 = base64Image.replace(/^data:image\/\w+;base64,/, "");
         const imageBuffer = Buffer.from(cleanBase64, "base64");
 
-        // Upload media.
-        const mediaId = await client.v1.uploadMedia(imageBuffer);
+        // Upload media with mimeType
+        const mediaId = await client.v1.uploadMedia(imageBuffer, { mimeType });
         return mediaId;
       })
     );
