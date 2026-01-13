@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { readFileAsDataURL } from "../utils/imageUtils";
 import type { ImageFile } from "../utils/imageUtils";
 import type { PostGroup } from "../components/StatusMonitor";
@@ -9,11 +9,48 @@ import { format } from "date-fns";
 const HISTORY_KEY = "x_auto_post_history";
 const MAX_HISTORY = 100;
 
+const delay = (ms: number) => new Promise((res) => setTimeout(res, ms));
+
+// Helper to resize thumbnail to < 100KB (Simple canvas impl)
+const resizeThumbnail = async (file: File): Promise<string> => {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement("canvas");
+      let width = img.width;
+      let height = img.height;
+      const maxSize = 300; // Small thumbnail
+
+      if (width > height) {
+        if (width > maxSize) {
+          height *= maxSize / width;
+          width = maxSize;
+        }
+      } else {
+        if (height > maxSize) {
+          width *= maxSize / height;
+          height = maxSize;
+        }
+      }
+
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext("2d");
+      ctx?.drawImage(img, 0, 0, width, height);
+      resolve(canvas.toDataURL("image/jpeg", 0.7));
+    };
+    img.src = URL.createObjectURL(file);
+  });
+};
+
 export const useAutoPost = () => {
   const [isPosting, setIsPosting] = useState(false);
   const [groups, setGroups] = useState<PostGroup[]>([]);
   const [currentGroupIndex, setCurrentGroupIndex] = useState(0);
   const [history, setHistory] = useState<PostHistoryItem[]>([]);
+  const [scheduledTime, setScheduledTime] = useState<Date | null>(null);
+  const [isScheduled, setIsScheduled] = useState(false);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Load history on mount
   useEffect(() => {
@@ -62,27 +99,14 @@ export const useAutoPost = () => {
   };
 
   // Main Posting Logic
-  const startPosting = useCallback(
-    async (text: string, images: ImageFile[]) => {
-      if (images.length === 0) return;
-
-      setIsPosting(true);
-      const initialGroups = createGroups(images);
-      setGroups(initialGroups);
-      setCurrentGroupIndex(0);
-
-      // Start the process
-      processGroups(initialGroups, text, images);
-    },
-    []
-  );
-
+  // Main Posting Logic
+  // Main Posting Logic
   const processGroups = async (
     currentGroups: PostGroup[],
     baseText: string,
     allImages: ImageFile[]
   ) => {
-    let activeGroups = [...currentGroups];
+    const activeGroups = [...currentGroups];
 
     for (let i = 0; i < activeGroups.length; i++) {
       setCurrentGroupIndex(i);
@@ -157,39 +181,49 @@ export const useAutoPost = () => {
     setIsPosting(false);
   };
 
-  const delay = (ms: number) => new Promise((res) => setTimeout(res, ms));
+  const startPosting = useCallback(
+    async (text: string, images: ImageFile[], scheduleDate?: Date) => {
+      if (images.length === 0) return;
 
-  // Helper to resize thumbnail to < 100KB (Simple canvas impl)
-  const resizeThumbnail = async (file: File): Promise<string> => {
-    return new Promise((resolve) => {
-      const img = new Image();
-      img.onload = () => {
-        const canvas = document.createElement("canvas");
-        let width = img.width;
-        let height = img.height;
-        const maxSize = 300; // Small thumbnail
+      const initialGroups = createGroups(images);
+      setGroups(initialGroups);
+      setCurrentGroupIndex(0);
 
-        if (width > height) {
-          if (width > maxSize) {
-            height *= maxSize / width;
-            width = maxSize;
-          }
-        } else {
-          if (height > maxSize) {
-            width *= maxSize / height;
-            height = maxSize;
-          }
+      if (scheduleDate) {
+        const now = new Date();
+        const delay = scheduleDate.getTime() - now.getTime();
+
+        if (delay > 0) {
+          setIsScheduled(true);
+          setScheduledTime(scheduleDate);
+
+          if (timerRef.current) clearTimeout(timerRef.current);
+
+          timerRef.current = setTimeout(() => {
+            setIsScheduled(false);
+            setScheduledTime(null);
+            setIsPosting(true);
+            processGroups(initialGroups, text, images);
+          }, delay);
+          return;
         }
+      }
 
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext("2d");
-        ctx?.drawImage(img, 0, 0, width, height);
-        resolve(canvas.toDataURL("image/jpeg", 0.7));
-      };
-      img.src = URL.createObjectURL(file);
-    });
-  };
+      setIsPosting(true);
+      // Start the process immediately
+      processGroups(initialGroups, text, images);
+    },
+    [processGroups]
+  );
+
+  const cancelSchedule = useCallback(() => {
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+    setIsScheduled(false);
+    setScheduledTime(null);
+  }, []);
 
   return {
     isPosting,
@@ -199,5 +233,8 @@ export const useAutoPost = () => {
     startPosting,
     deleteHistory,
     clearHistory,
+    scheduledTime,
+    isScheduled,
+    cancelSchedule,
   };
 };
