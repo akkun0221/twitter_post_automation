@@ -47,11 +47,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           const match = base64Image.match(/^data:(image\/\w+);base64,/);
           const mimeType = match ? match[1] : "image/jpeg";
 
-          let type = "jpg";
-          if (mimeType === "image/png") type = "png";
-          if (mimeType === "image/gif") type = "gif";
-          if (mimeType === "image/webp") type = "webp";
-
           const cleanBase64 = base64Image.replace(
             /^data:image\/\w+;base64,/,
             ""
@@ -61,10 +56,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           console.log(
             `Uploading image ${index + 1}... size: ${imageBuffer.length} bytes`
           );
-          const mediaId = await client.v1.uploadMedia(imageBuffer, {
-            mimeType,
-            type,
+
+          // ✅ v1 → v2 に変更（v1.1は2025年6月廃止済み）
+          const mediaId = await client.v2.uploadMedia(imageBuffer, {
+            media_type: mimeType,
           });
+
           return mediaId;
         } catch (mediaErr: unknown) {
           const mErr = mediaErr as Error;
@@ -92,10 +89,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       postId: tweet.data.id,
     });
   } catch (error: unknown) {
-    const err = error as any; // Still using any for the complex Twitter error object, but logging it explicitly
+    const err = error as any;
     console.error("Twitter API Execution Error:", JSON.stringify(err, null, 2));
 
-    // Attempt to extract as much info as possible without breaking types too much
     const errorMessage =
       err instanceof Error ? err.message : "Internal Server Error";
 
