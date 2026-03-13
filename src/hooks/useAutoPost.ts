@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { readFileAsDataURL } from "../utils/imageUtils";
 import type { ImageFile } from "../utils/imageUtils";
 import type { PostGroup } from "../components/StatusMonitor";
@@ -8,6 +8,7 @@ import { format } from "date-fns";
 
 const HISTORY_KEY = "x_auto_post_history";
 const MAX_HISTORY = 100;
+const ERROR_TIMEOUT_SEC = 30; // エラー後にボタンが再活性化するまでの秒数
 
 const delay = (ms: number) => new Promise((res) => setTimeout(res, ms));
 
@@ -47,6 +48,9 @@ export const useAutoPost = () => {
   const [isPosting, setIsPosting] = useState(false);
   const [groups, setGroups] = useState<PostGroup[]>([]);
   const [currentGroupIndex, setCurrentGroupIndex] = useState(0);
+  const [errorCountdown, setErrorCountdown] = useState<number>(0); // 0 = タイムアウトなし
+  const countdownTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
   const [history, setHistory] = useState<PostHistoryItem[]>(() => {
     const saved = localStorage.getItem(HISTORY_KEY);
     if (saved) {
@@ -63,6 +67,34 @@ export const useAutoPost = () => {
   useEffect(() => {
     localStorage.setItem(HISTORY_KEY, JSON.stringify(history));
   }, [history]);
+
+  // カウントダウンが 0 になったらタイマーをクリア
+  useEffect(() => {
+    if (errorCountdown <= 0 && countdownTimerRef.current) {
+      clearInterval(countdownTimerRef.current);
+      countdownTimerRef.current = null;
+    }
+  }, [errorCountdown]);
+
+  // エラー時のカウントダウン開始
+  const startErrorCountdown = useCallback((seconds: number) => {
+    // 既存タイマーがあればクリア
+    if (countdownTimerRef.current) {
+      clearInterval(countdownTimerRef.current);
+    }
+    setErrorCountdown(seconds);
+    countdownTimerRef.current = setInterval(() => {
+      setErrorCountdown((prev) => {
+        if (prev <= 1) {
+          clearInterval(countdownTimerRef.current!);
+          countdownTimerRef.current = null;
+          setIsPosting(false); // ← カウントダウン終了でボタン再活性化
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+  }, []);
 
   const addToHistory = useCallback((item: PostHistoryItem) => {
     setHistory((prev) => {
@@ -101,6 +133,7 @@ export const useAutoPost = () => {
       allImages: ImageFile[]
     ) => {
       const activeGroups = [...currentGroups];
+      let hasAnyError = false;
 
       for (let i = 0; i < activeGroups.length; i++) {
         setCurrentGroupIndex(i);
@@ -145,6 +178,8 @@ export const useAutoPost = () => {
         } catch (error: unknown) {
           const err = error as Error;
           console.error(err);
+          hasAnyError = true;
+
           // Retry logic
           if (activeGroups[i].retryCount < 5) {
             console.log(
@@ -172,14 +207,32 @@ export const useAutoPost = () => {
         }
       }
 
-      setIsPosting(false);
+      // 全グループ処理完了後
+      const allFailed = activeGroups.every((g) => g.status === "failed");
+      const anyFailed = activeGroups.some((g) => g.status === "failed");
+
+      if (allFailed || (hasAnyError && anyFailed)) {
+        // エラーがあった場合はカウントダウン後にボタン再活性化
+        // isPosting は true のまま維持し、カウントダウン終了時に false にする
+        startErrorCountdown(ERROR_TIMEOUT_SEC);
+      } else {
+        // 全て成功 or エラーなしで完了
+        setIsPosting(false);
+      }
     },
-    [addToHistory]
+    [addToHistory, startErrorCountdown]
   );
 
   const startPosting = useCallback(
     async (text: string, images: ImageFile[]) => {
       if (images.length === 0) return;
+
+      // 既存のカウントダウンがあればクリア
+      if (countdownTimerRef.current) {
+        clearInterval(countdownTimerRef.current);
+        countdownTimerRef.current = null;
+      }
+      setErrorCountdown(0);
 
       const initialGroups = createGroups(images);
       setGroups(initialGroups);
@@ -197,6 +250,7 @@ export const useAutoPost = () => {
     groups,
     currentGroupIndex,
     history,
+    errorCountdown,
     startPosting,
     deleteHistory,
     clearHistory,

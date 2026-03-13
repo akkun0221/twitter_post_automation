@@ -16,6 +16,7 @@ function App() {
     groups,
     currentGroupIndex,
     history,
+    errorCountdown,
     startPosting,
     deleteHistory,
     clearHistory
@@ -60,7 +61,11 @@ function App() {
                   : 'bg-black text-white hover:bg-gray-800 hover:shadow-xl hover:-translate-y-0.5 hover:shadow-pop-cyan/50'
                   }`}
               >
-                {isPosting ? '自動投稿を実行中...' : '自動投稿を開始する'}
+                {isPosting
+                  ? errorCountdown > 0
+                    ? `エラー発生 — ${errorCountdown}秒後に再試行できます`
+                    : '自動投稿を実行中...'
+                  : '自動投稿を開始する'}
               </button>
               <button
                 onClick={handleReset}
