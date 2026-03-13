@@ -23,7 +23,6 @@ function App() {
 
   const handlePost = () => {
     if (images.length === 0) return alert('画像を1枚以上選択してください');
-    if (!confirm('自動投稿を開始しますか？')) return;
 
     startPosting(text, images);
   };
